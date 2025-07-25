@@ -2,13 +2,17 @@
     import { invoke } from "@tauri-apps/api/core";
     import Paste from "../icons/paste.svelte";
     import type { YtDlpResponse, YtDlpFormat } from "../constants/types";
+    import FormatList from "../components/FormatList.svelte";
     let inputElem: HTMLInputElement;
     let videoFormats: Array<YtDlpFormat> = [];
     let audioFormats: Array<YtDlpFormat> = [];
+    let defaultFormats: Array<YtDlpFormat> = [];
     let loading = false;
     let error = "";
     let selectedVideoFormat: string | null = null;
     let selectedAudioFormat: string | null = null;
+    let selectedDefaultFormat: string | null = null;
+    let downloading = false;
 
     async function handlePasteIconClick(): Promise<void> {
         try {
@@ -23,7 +27,6 @@
 
     async function fetchFormats() {
         const url = inputElem.value.trim();
-        console.log("Fetching formats for URL:", url);
         if (!url) {
             error = "Please paste a YouTube URL";
             return;
@@ -32,22 +35,37 @@
         error = "";
         videoFormats = [];
         audioFormats = [];
+        defaultFormats = [];
         selectedVideoFormat = null;
         selectedAudioFormat = null;
+        selectedDefaultFormat = null;
 
         try {
             const response: YtDlpResponse = await invoke("fetch_formats", {
                 url,
             });
-            console.log("Response from backend:", response);
             videoFormats = response.formats
-                .filter((f) => f.vcodec !== "none" && f.acodec === "none")
+                .filter(
+                    (f) =>
+                        f.vcodec !== "none" &&
+                        f.acodec === "none" &&
+                        f.filesize !== null,
+                )
                 .sort((a, b) => (b.height || 0) - (a.height || 0));
             audioFormats = response.formats
-                .filter((f) => f.acodec !== "none" && f.vcodec === "none")
+                .filter(
+                    (f) =>
+                        f.acodec !== "none" &&
+                        f.vcodec === "none" &&
+                        f.filesize !== null,
+                )
                 .sort((a, b) => (b.tbr || 0) - (a.tbr || 0));
-            console.log("Video formats:", videoFormats);
-            console.log("Audio formats:", audioFormats);
+            defaultFormats = response.formats.filter(
+                (f) =>
+                    f.vcodec !== "none" &&
+                    f.acodec !== "none" &&
+                    f.filesize !== null,
+            );
         } catch (e) {
             error =
                 "Failed to fetch formats. Please check the URL or try again.";
@@ -55,21 +73,20 @@
         loading = false;
     }
 
-    function formatBytes(bytes: number | undefined, decimals = 2) {
-        if (!bytes || bytes === 0) return "0 Bytes";
-        const k = 1024;
-        const dm = decimals < 0 ? 0 : decimals;
-        const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return (
-            parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i]
-        );
-    }
-
-    function handleDownload() {
-        console.log("Selected video format:", selectedVideoFormat);
-        console.log("Selected audio format:", selectedAudioFormat);
-        // TODO: Implement download logic
+    async function handleDownload() {
+        downloading = true;
+        error = "";
+        try {
+            await invoke("download", {
+                url: inputElem.value.trim(),
+                videoFormat: selectedVideoFormat,
+                audioFormat: selectedAudioFormat,
+                defaultFormat: selectedDefaultFormat,
+            });
+        } catch (e) {
+            error = `Download failed: ${e}`;
+        }
+        downloading = false;
     }
 </script>
 
@@ -116,87 +133,81 @@
         <p class="text-error mt-4">{error}</p>
     {/if}
 
-    {#if !loading && (videoFormats.length > 0 || audioFormats.length > 0)}
-        <div class="w-full max-w-4xl mt-8">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <!-- Video Formats -->
-                <div>
-                    <h2 class="text-2xl font-bold text-text mb-4">
-                        Video Formats
-                    </h2>
-                    <div class="flex flex-col gap-2">
-                        {#each videoFormats as format}
-                            <label
-                                class="flex items-center gap-4 p-3 rounded-md border border-accent/20 hover:bg-surface transition cursor-pointer"
-                            >
-                                <input
-                                    type="radio"
-                                    name="video-format"
-                                    value={format.format_id}
-                                    bind:group={selectedVideoFormat}
-                                    class="radio radio-accent"
-                                />
-                                <div class="flex-grow">
-                                    <p class="font-medium text-text">
-                                        {format.height}p{format.fps
-                                            ? `@${format.fps}`
-                                            : ""}
-                                        <span class="text-sm text-subtext"
-                                            >({format.ext})</span
-                                        >
-                                    </p>
-                                    <p class="text-sm text-subtext">
-                                        {formatBytes(format.filesize)}
-                                    </p>
-                                </div>
-                            </label>
-                        {/each}
-                    </div>
-                </div>
-
-                <!-- Audio Formats -->
-                <div>
-                    <h2 class="text-2xl font-bold text-text mb-4">
-                        Audio Formats
-                    </h2>
-                    <div class="flex flex-col gap-2">
-                        {#each audioFormats as format}
-                            <label
-                                class="flex items-center gap-4 p-3 rounded-md border border-accent/20 hover:bg-surface transition cursor-pointer"
-                            >
-                                <input
-                                    type="radio"
-                                    name="audio-format"
-                                    value={format.format_id}
-                                    bind:group={selectedAudioFormat}
-                                    class="radio radio-accent"
-                                />
-                                <div class="flex-grow">
-                                    <p class="font-medium text-text">
-                                        {format.format_note || format.acodec}
-                                        <span class="text-sm text-subtext"
-                                            >({format.ext})</span
-                                        >
-                                    </p>
-                                    <p class="text-sm text-subtext">
-                                        {formatBytes(format.filesize)} | {Math.round(
-                                            format.tbr || 0,
-                                        )}kbps
-                                    </p>
-                                </div>
-                            </label>
-                        {/each}
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-8 text-center">
-                <button
-                    class="py-3 px-8 bg-love text-white text-lg font-medium rounded-md hover:bg-love/90 transition-colors shadow-sm disabled:bg-surface disabled:cursor-not-allowed"
-                    on:click={handleDownload}
-                    disabled={!selectedVideoFormat && !selectedAudioFormat}
+    {#if !loading && (videoFormats.length > 0 || audioFormats.length > 0 || defaultFormats.length > 0)}
+        <div class="w-full max-w-4xl mt-4">
+            {#if defaultFormats.length > 0}
+                <FormatList
+                    title="Default Formats"
+                    formats={defaultFormats}
+                    bind:group={selectedDefaultFormat}
+                    name="default-format"
+                    onSelectionChange={() => {
+                        selectedVideoFormat = null;
+                        selectedAudioFormat = null;
+                    }}
+                    let:format
+                    let:formatBytes
                 >
-                    Download
+                    <p class="font-medium text-text">
+                        {format.height}p{format.fps ? `@${format.fps}` : ""}
+                        <span class="text-sm text-subtext">({format.ext})</span>
+                    </p>
+                    <p class="text-sm text-subtext">
+                        {formatBytes(format.filesize)} | {format.vcodec} | {format.acodec}
+                    </p>
+                </FormatList>
+            {/if}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-4">
+                <FormatList
+                    title="Video Formats"
+                    formats={videoFormats}
+                    bind:group={selectedVideoFormat}
+                    name="video-format"
+                    onSelectionChange={() => (selectedDefaultFormat = null)}
+                    let:format
+                    let:formatBytes
+                >
+                    <p class="font-medium text-text">
+                        {format.height}p{format.fps ? `@${format.fps}` : ""}
+                        <span class="text-sm text-subtext">({format.ext})</span>
+                    </p>
+                    <p class="text-sm text-subtext">
+                        {formatBytes(format.filesize)}
+                    </p>
+                </FormatList>
+                <FormatList
+                    title="Audio Formats"
+                    formats={audioFormats}
+                    bind:group={selectedAudioFormat}
+                    name="audio-format"
+                    onSelectionChange={() => (selectedDefaultFormat = null)}
+                    let:format
+                    let:formatBytes
+                >
+                    <p class="font-medium text-text">
+                        {format.format_note || format.acodec}
+                        <span class="text-sm text-subtext">({format.ext})</span>
+                    </p>
+                    <p class="text-sm text-subtext">
+                        {formatBytes(format.filesize)} | {Math.round(
+                            format.tbr || 0,
+                        )}kbps
+                    </p>
+                </FormatList>
+            </div>
+            <div class="mt-4 text-center">
+                <button
+                    class="py-3 px-8 bg-love bg-accent text-white text-lg font-medium rounded-md hover:bg-love/90 transition-colors shadow-sm disabled:bg-surface disabled:cursor-not-allowed"
+                    on:click={handleDownload}
+                    disabled={!selectedVideoFormat ||
+                        (!selectedAudioFormat && !selectedDefaultFormat) ||
+                        downloading}
+                >
+                    {#if downloading}
+                        Downloading...
+                    {:else}
+                        Download
+                    {/if}
                 </button>
             </div>
         </div>
