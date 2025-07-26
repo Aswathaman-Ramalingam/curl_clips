@@ -26,7 +26,7 @@ jobs:
 
       - name: Install JS deps and build frontend
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Build Tauri app
