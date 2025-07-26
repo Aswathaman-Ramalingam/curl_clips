@@ -30,9 +30,7 @@ jobs:
           npm run build
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        with:
-          args: --target all
+        uses: tauri-apps/tauri-action@v1
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
