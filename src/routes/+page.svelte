@@ -44,6 +44,9 @@
             const response: YtDlpResponse = await invoke("fetch_formats", {
                 url,
             });
+
+            console.log(response);
+
             videoFormats = response.formats
                 .filter(
                     (f) =>
