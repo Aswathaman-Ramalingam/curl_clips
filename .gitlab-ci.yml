@@ -1,0 +1,215 @@
+stages:
+  - setup
+  - build
+  - package
+
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  RUSTUP_HOME: $CI_PROJECT_DIR/.rustup
+  BUN_INSTALL: $CI_PROJECT_DIR/.bun
+
+# Cache dependencies
+cache:
+  key: $CI_COMMIT_REF_SLUG
+  paths:
+    - .cargo/
+    - .rustup/
+    - .bun/
+    - node_modules/
+    - src-tauri/target/
+
+# Setup stage - Install dependencies
+setup-dependencies:
+  stage: setup
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl wget build-essential libssl-dev pkg-config
+    - curl -fsSL https://bun.sh/install | bash
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    - source $RUSTUP_HOME/env
+    - rustup target add x86_64-unknown-linux-gnu
+    - rustup target add x86_64-pc-windows-gnu
+    - rustup target add x86_64-pc-windows-msvc
+    - rustup target add aarch64-unknown-linux-gnu
+    - rustup target add aarch64-apple-darwin
+    - cargo install tauri-cli
+  script:
+    - source $RUSTUP_HOME/env
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - bun install
+    - cd src-tauri && cargo fetch
+  artifacts:
+    paths:
+      - .cargo/
+      - .rustup/
+      - .bun/
+      - node_modules/
+      - src-tauri/target/
+    expire_in: 1 hour
+
+# Build for Linux x64
+build-linux-x64:
+  stage: build
+  image: ubuntu:22.04
+  before_script:
+    - curl -fsSL https://bun.sh/install | bash
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    - source $RUSTUP_HOME/env
+    - rustup target add x86_64-unknown-linux-gnu
+    - apt-get update -qq && apt-get install -y -qq build-essential libssl-dev pkg-config
+  script:
+    - source $RUSTUP_HOME/env
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - bun install
+    - bun run build
+    - cd src-tauri
+    - cargo tauri build --target x86_64-unknown-linux-gnu --release
+  artifacts:
+    paths:
+      - src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags
+
+# Build for Linux ARM64
+build-linux-arm64:
+  stage: build
+  image: ubuntu:22.04
+  before_script:
+    - curl -fsSL https://bun.sh/install | bash
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    - source $RUSTUP_HOME/env
+    - rustup target add aarch64-unknown-linux-gnu
+    - apt-get update -qq && apt-get install -y -qq build-essential libssl-dev pkg-config gcc-aarch64-linux-gnu
+  script:
+    - source $RUSTUP_HOME/env
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - bun install
+    - bun run build
+    - cd src-tauri
+    - cargo tauri build --target aarch64-unknown-linux-gnu --release
+  artifacts:
+    paths:
+      - src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags
+
+# Build for Windows x64 MSVC
+build-windows-x64-msvc:
+  stage: build
+  image: mcr.microsoft.com/windows/servercore:ltsc2022
+  before_script:
+    - choco install -y nodejs
+    - choco install -y rust
+    - choco install -y visualstudio2022buildtools
+    - choco install -y visualstudio2022-workload-vctools
+    - refreshenv
+    - rustup target add x86_64-pc-windows-msvc
+    - npm install -g bun
+  script:
+    - refreshenv
+    - bun install
+    - bun run build
+    - cd src-tauri
+    - cargo tauri build --target x86_64-pc-windows-msvc --release
+  artifacts:
+    paths:
+      - src-tauri/target/x86_64-pc-windows-msvc/release/bundle/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags
+
+# Build for Windows x64 GNU
+build-windows-x64-gnu:
+  stage: build
+  image: mcr.microsoft.com/windows/servercore:ltsc2022
+  before_script:
+    - choco install -y nodejs
+    - choco install -y rust
+    - choco install -y mingw
+    - refreshenv
+    - rustup target add x86_64-pc-windows-gnu
+    - npm install -g bun
+  script:
+    - refreshenv
+    - bun install
+    - bun run build
+    - cd src-tauri
+    - cargo tauri build --target x86_64-pc-windows-gnu --release
+  artifacts:
+    paths:
+      - src-tauri/target/x86_64-pc-windows-gnu/release/bundle/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags
+
+# Package stage - Create release artifacts
+package-release:
+  stage: package
+  image: ubuntu:22.04
+  dependencies:
+    - build-linux-x64
+    - build-linux-arm64
+    - build-windows-x64-msvc
+    - build-windows-x64-gnu
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq zip
+  script:
+    - mkdir -p releases
+    - |
+      if [ -d "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle" ]; then
+        cd src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
+        for file in *; do
+          if [ -f "$file" ]; then
+            cp "$file" ../../../../../releases/curl_clips-linux-x64-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}.${file##*.}
+          fi
+        done
+      fi
+    - |
+      if [ -d "src-tauri/target/aarch64-unknown-linux-gnu/release/bundle" ]; then
+        cd src-tauri/target/aarch64-unknown-linux-gnu/release/bundle
+        for file in *; do
+          if [ -f "$file" ]; then
+            cp "$file" ../../../../../releases/curl_clips-linux-arm64-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}.${file##*.}
+          fi
+        done
+      fi
+    - |
+      if [ -d "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" ]; then
+        cd src-tauri/target/x86_64-pc-windows-msvc/release/bundle
+        for file in *; do
+          if [ -f "$file" ]; then
+            cp "$file" ../../../../../releases/curl_clips-windows-x64-msvc-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}.${file##*.}
+          fi
+        done
+      fi
+    - |
+      if [ -d "src-tauri/target/x86_64-pc-windows-gnu/release/bundle" ]; then
+        cd src-tauri/target/x86_64-pc-windows-gnu/release/bundle
+        for file in *; do
+          if [ -f "$file" ]; then
+            cp "$file" ../../../../../releases/curl_clips-windows-x64-gnu-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}.${file##*.}
+          fi
+        done
+      fi
+    - cd releases && zip -r curl_clips-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}-all-platforms.zip .
+  artifacts:
+    paths:
+      - releases/
+    expire_in: 1 month
+  only:
+    - main
+    - develop
+    - tags 

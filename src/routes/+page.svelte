@@ -199,8 +199,8 @@
                 <button
                     class="py-3 px-8 bg-love bg-accent text-white text-lg font-medium rounded-md hover:bg-love/90 transition-colors shadow-sm disabled:bg-surface disabled:cursor-not-allowed"
                     on:click={handleDownload}
-                    disabled={!selectedVideoFormat ||
-                        (!selectedAudioFormat && !selectedDefaultFormat) ||
+                    disabled={!selectedDefaultFormat &&
+                        (!selectedVideoFormat || !selectedAudioFormat) ||
                         downloading}
                 >
                     {#if downloading}
